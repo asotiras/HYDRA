@@ -15,13 +15,23 @@ HYDRA
 
 Author:
 Erdem Varol
+
+Contributor:
+Aristeidis Sotiras
+
+Support:
 software@cbica.upenn.edu
 
 ===============
 1. INTRODUCTION
 ===============
-This software performs clustering of heterogenous disease patterns within patient group. The clustering is based on seperating the patient imaging features from the control imaging features using a convex polytope classifier. Covariate correction can be performed optionally.
+This software performs clustering of heterogenous disease patterns within patient group. The clustering is based on separating the patient imaging features from the control imaging features using a convex polytope classifier. Covariate correction can be performed optionally.
 
+This code corresponds to the HYDRA version that was used for the paper:
+
+Erdem Varol, Aristeidis Sotiras, Christos Davatzikos, and Alzheimer's Disease Neuroimaging Initiative. "HYDRA: Revealing heterogeneity of imaging and genetic patterns through a multiple max-margin discriminative analysis framework." NeuroImage 145 (2017): 346-364.
+
+The only difference is that instead of using the libsvm solver, a matlab function that makes use of the matlab optimization toolbox is employed. The goal is to reduce the dependencies on external software packages.
 
 ===============
 2. TESTING & INSTALLATION
@@ -63,7 +73,7 @@ To test in command line using the compiled executable, use the command:
 
 hydra -i test.csv -o . -z test_covar.csv -k 3 -f 3
 
-This runs a HYDRA experiment which may take a few minutes. The test case contains a subset of a functional MRI study dataset by T. Satterwaithe comprising 100 subjects and their functional ROI's. The output is the clustering labels of the input subjects (only patients are clustered) at varying clustering levels. Also, the clustering stability at varying levels is output to show the rationale for choosing the clustering level.
+This runs a HYDRA experiment which may take a few minutes. The test case contains a subset of a functional MRI study dataset by T. Satterthwaite comprising 100 subjects and their functional ROI's. The output is the clustering labels of the input subjects (only patients are clustered) at varying clustering levels. Also, the clustering stability at varying levels is output to show the rationale for choosing the clustering level.
 
 -----------------
  Test Verification
@@ -89,7 +99,7 @@ NOTE: Label headers names are not strict.
 
 An example input csv file looks as following:
     
-ID,        feature_1,    feauture_2,    feature_3,    group
+ID,        feature_1,    feature_2,    feature_3,    group
 subject_1,    5,        1,        79.3,        -1
 subject_2,    10,        1,        71.4,        1
 subject_3,    3,        1,        82.7,        -1
@@ -133,7 +143,7 @@ ID - subject ID of rows
 
 If you find this software useful, please cite:
 
-Varol, Erdem, Aristeidis Sotiras, Christos Davatzikos, and Alzheimer's Disease Neuroimaging Initiative. "HYDRA: Revealing heterogeneity of imaging and genetic patterns through a multiple max-margin discriminative analysis framework." NeuroImage 145 (2017): 346-364.
+Erdem Varol, Aristeidis Sotiras, Christos Davatzikos, and Alzheimer's Disease Neuroimaging Initiative. "HYDRA: Revealing heterogeneity of imaging and genetic patterns through a multiple max-margin discriminative analysis framework." NeuroImage 145 (2017): 346-364.
 
 ===========
 5. LICENSING
