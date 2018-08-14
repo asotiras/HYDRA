@@ -82,7 +82,7 @@ end
 %
 % OPTIONAL
 %
-% [--covCSV, -z] : .csv file containing values for different covariates, which
+% [--cov, -z] : .csv file containing values for different covariates, which
 %           will be used to correct the data accordingly (OPTIONAL). Every
 %           column of the file contains values for a covariate, with the
 %           exception of the first column, which contains subject
@@ -92,7 +92,13 @@ end
 %           effect of ALL provided covariates is removed. If no file is
 %           specified, no correction is performed.
 %
-% NOTE: featureCSV and covCSV files are assumed to have the subjects given
+% [--weight, -w] : .csv file containing user-provided weights for the respective 
+% 				samples (OPTIONAL). Such weights may be used to appropriately 
+%				counter-balance the effect of covariates. The first column of the file 
+%				contains the sample IDs, while the second column of the file contains the
+%				the respective weights.
+%
+% NOTE: input, cov, and weight CSV files are assumed to have the subjects given
 %       in the same order in their rows
 %
 % [--c, -c] : regularization parameter (positive scalar). smaller values produce
@@ -162,6 +168,13 @@ if( sum(or(strcmpi(varargin,'--cov'),strcmpi(varargin,'-z')))==1)
     covCSV=varargin{find(or(strcmpi(varargin,'--cov'),strcmp(varargin,'-z')))+1};
 else
     covCSV=[];
+end
+
+if( sum(or(strcmpi(varargin,'--weight'),strcmpi(varargin,'-w')))==1)
+    weightCSV=varargin{find(or(strcmpi(varargin,'--weight'),strcmp(varargin,'-w')))+1};
+else
+    weightCSV=[];
+    params.weights=[];
 end
 
 if( sum(or(strcmpi(varargin,'--c'),strcmpi(varargin,'-c')))==1)
@@ -300,6 +313,7 @@ disp('HYDRA runs with the following parameteres');
 disp(['featureCSV: ' featureCSV]);
 disp(['OutputDir: ' outputDir]);
 disp(['covCSV: ' covCSV])
+disp(['weightCSV: ' weightCSV])
 disp(['C: ' num2str(params.C)]);
 disp(['reg_type: ' num2str(params.reg_type)]);
 disp(['balanceclasses: ' num2str(params.balanceclasses)]);
@@ -326,6 +340,15 @@ if(~isempty(covfname))
     end
 end
 
+% csv with sample weights
+weightfname=weightCSV;
+if(~isempty(weightfname))
+    if(~exist(weightfname,'file'))
+        error('hydra:argChk','Input weight .csv file does not exist');
+    end
+end
+
+
 % input data
 % assumption is that the first column contains IDs, and the last contains
 % labels
@@ -349,6 +372,16 @@ if(~isempty(covfname))
     disp('Done');
 end
 
+% input sample weight information if necesary
+if(~isempty(weightfname))
+    disp('Loading weights...');
+    covardata = readtable(weightfname) ;
+    IDweights = covardata{:,1};
+    params.weights = covardata{:,2};
+    weights = param.weights;
+    disp('Done');
+end
+
 % NOTE: we assume that the imaging data and the covariate data are given in
 % the same order. No test is performed to check that. By choosing to have a
 % verbose output, you can have access to the ID values are read by the
@@ -369,6 +402,14 @@ if(~isempty(covfname))
     disp('Done');
 else
     XK0=XK;
+end
+
+% verify that we have weight data and imaging data for the same number
+% of subjects
+if(~isempty(weightfname))
+    if(size(params.weights,1)~=size(XK,1))
+        error('hydra:argChk','The feature .csv and weight .csv file contain data for different number of subjects');
+    end
 end
 
 % for each realization of cross-validation
@@ -408,7 +449,7 @@ disp('Saving results...')
 if(params.vo==0)
     save([outputDir '/HYDRA_results.mat'],'ARI','CIDX','clustering','ID');
 else
-    save([outputDir '/HYDRA_results.mat'],'ARI','CIDX','clustering','ID','XK','Y','covar','IDcovar');
+    save([outputDir '/HYDRA_results.mat'],'ARI','CIDX','clustering','ID','XK','Y','covar','IDcovar','IDweights','weights');
 end
 disp('Done')
 end
@@ -562,7 +603,7 @@ fprintf(' [--outputDir, -o] : directory where the output from all folds will be 
 fprintf('\n')
 fprintf(' OPTIONAL\n')
 fprintf('\n')
-fprintf(' [--covCSV, -z] : .csv file containing values for different covariates, which\n')
+fprintf(' [--cov, -z] : .csv file containing values for different covariates, which\n')
 fprintf('           will be used to correct the data accordingly (OPTIONAL). Every\n')
 fprintf('           column of the file contains values for a covariate, with the\n')
 fprintf('           exception of the first column, which contains subject\n')
@@ -571,6 +612,14 @@ fprintf('           solving a least square problem to estimate the respective\n'
 fprintf('           coefficients and then removing their effect from the data. The\n')
 fprintf('           effect of ALL provided covariates is removed. If no file is\n')
 fprintf('           specified, no correction is performed.\n')
+fprintf('\n')
+fprintf(' [--weight, -w] : .csv file containing v user-provided weights for the \n')
+fprintf('           respective samples (OPTIONAL). Such weights may be used to \n')
+fprintf('           appropriately counter-balance the effect of covariates. \n')
+fprintf('           The first column of the file contains subject identifying\n')
+fprintf('           information. The second column of the file contains the respective\n')
+fprintf('           weights. A way to possibly calculate such weights is by making\n')
+fprintf('           use of inverse probability weighting.\n')
 fprintf('\n')
 fprintf(' NOTE: featureCSV and covCSV files are assumed to have the subjects given\n')
 fprintf('       in the same order in their rows\n')
