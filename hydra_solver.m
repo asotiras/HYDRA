@@ -1,5 +1,5 @@
 %  HYDRA SOLVER
-%  Version 1.0.0 --- January 2018
+%  Version 1.0.1 --- August 2018
 %  Section of Biomedical Image Analysis
 %  Department of Radiology
 %  University of Pennsylvania
@@ -13,12 +13,14 @@
 %  Copyright (c) 2018 University of Pennsylvania. All rights reserved.
 %  See https://www.med.upenn.edu/sbia/software-agreement.html or COPYING file.
 %
-%  Author:
-%  Erdem Varol
+%  Author: Erdem Varol
+%  Contributor: Aristeidis Sotiras
+%  Acknowledegment: We acknowledge the use of matlab functions written by Mo Chen (kernel
+%  k-means) and Alez Kulesza (determinantal point processes).
 %  software@cbica.upenn.edu
 
 
-function model=hydra_solver(XK,Y,Cov,params);
+function model=hydra_solver(XK,Y,params)
 %% Parameters:
 % numconsensus -- (int>=0) 0 for no consensus, positive integer for number of consensus
 % runs
@@ -32,6 +34,11 @@ function model=hydra_solver(XK,Y,Cov,params);
 % assignment, 2: k-means assignment (default), 3: assignment by DPP random
 % hyperplanes
 % reg_type -- (1 or 2): 1 solves L1-SVM, 2 solves L2-SVM
+% balanceclasses -- (0 or 1): takes into account differences in the number between the two
+%           classes. 1-> in case there is mismatch between the number of
+%           controls and patient - 0-> otherwise (OPTIONAL - Default 1)
+% weights -- vector containing weights for adaptive weighting of the samples when solving
+%			the multiple hyperplane classification problem (Default: empty)
 %% parameters
 if ~isfield(params,'numconsensus')
     params.numconsensus=50;
@@ -52,7 +59,7 @@ if ~isfield(params,'init_type')
     params.init_type=2;
 end
 if ~isfield(params,'balanceclasses')
-    params.balanceclasses=0;
+    params.balanceclasses=1;
 end
 if ~isfield(params,'fixedclustering')
     params.fixedclustering=0;
@@ -62,6 +69,9 @@ if ~isfield(params,'fixedclusteringIDX')
 end
 if ~isfield(params,'reg_type');
     params.reg_type=2;
+end
+if ~isfield(params,'weights');
+    params.weights=[];
 end
 
 params.type='classification';
@@ -77,90 +87,75 @@ switch params.type
             [~,~,params.fixedclusteringIDX(Y==1,1)]=unique(params.fixedclusteringIDX(Y==1,1));
         end
         
-	%option for l2-regularization (default)
+        %option for l2-regularization
         if params.reg_type==2;
-                if params.kernel==0
-                    svmX=XK;
-                    svmparams='-t 0';
-                    initparams.kernel=0;
-                elseif params.kernel==1
-                    svmX=[(1:size(XK,1))' XK];
-                    svmparams='-t 4';
-                    initparams.kernel=1;
-                end
-                
-                if params.fixedclustering==0
-                    IDX=zeros(size(Y(Y==1,:),1),params.numconsensus);
-                    for tt=1:params.numconsensus
-
-			%Initialization
-                        W=ones(size(Y,1),params.k)/params.k;
-                        W(Y==1,:)=hydra_init_v2(XK,Y,params.k,initparams);
-                        S=zeros(size(W));
-                        cn=zeros(1,params.k);cp=zeros(1,params.k);nrm=zeros(1,params.k);
-                        for t=1:params.numiter
-                            for j=1:params.k
-				%Weights for negative and positive samples
-                                cn(1,j)=1./mean(W(Y==-1,j),1);
-                                cp(1,j)=1./mean(W(Y==1,j),1);
-                                nrm(1,j)=cn(1,j)+cp(1,j);
-                                cn(1,j)=cn(1,j)/nrm(1,j);
-                                cp(1,j)=cp(1,j)/nrm(1,j);
-
-                                if params.balanceclasses==1
-					%Weighted svm taking into account negative/positive imbalance to solve for polytope hyperplanes
-                                    mdl{j}=w_svmtrain(XK,Y,W(:,j),params.C,cp(1,j),cn(1,j),params.kernel);
-                                else
-					%Unweighted svm to solve for polytope hyperplanes
-                                    mdl{j}=w_svmtrain(XK,Y,W(:,j),params.C,1,1,params.kernel);
-                                end
-				%Solving subject projection score along each face of the polytope
-                                S(:,j)=w_svmpredict(XK,mdl{j},params.kernel);
-                            end
-				%Subject assignment to the face of the polytope with maximum score
-                            [~,idx]=max(S(Y==1,:),[],2);
-                            Wold=W;
-                            W(Y==1,:)=0;
-                            W(sub2ind(size(W),find(Y==1),idx))=1;
-                            if norm(W-Wold,'fro')<1e-6;
-                                disp('converged');
-                                break
-                            end
-                        end
-                        IDX(:,tt)=idx;
-                        
-                    end
+            if params.kernel==0
+                svmX=XK;
+                svmparams='-t 0';
+                initparams.kernel=0;
+            elseif params.kernel==1
+                svmX=[(1:size(XK,1))' XK];
+                svmparams='-t 4';
+                initparams.kernel=1;
+            end
+            
+            if params.fixedclustering==0
+                IDX=zeros(size(Y(Y==1,:),1),params.numconsensus);
+                for tt=1:params.numconsensus
                     
-			%Consensus steps, solving the assignments multiple times for stability
-                    if params.numconsensus>1
-                        IDXfinal=consensus_clustering(IDX,params.k);
-                        W=zeros(size(Y,1),params.k);
-                        W(sub2ind(size(W),find(Y==1),IDXfinal))=1;
-                        W(Y==-1,:)=1/params.k;
-                        cn=zeros(1,params.k);cp=zeros(1,params.k);nrm=zeros(1,params.k);
+                    %Initialization
+                    W=ones(size(Y,1),params.k)/params.k;
+                    W(Y==1,:)=hydra_init_v2(XK,Y,params.k,initparams);
+                    if(~isempty(params.weights))
+                        W=bsxfun(@times,W,params.weights);
+                    end
+                    S=zeros(size(W));
+                    cn=zeros(1,params.k);cp=zeros(1,params.k);nrm=zeros(1,params.k);
+                    for t=1:params.numiter
                         for j=1:params.k
+                            %Weights for negative and positive samples
                             cn(1,j)=1./mean(W(Y==-1,j),1);
                             cp(1,j)=1./mean(W(Y==1,j),1);
                             nrm(1,j)=cn(1,j)+cp(1,j);
                             cn(1,j)=cn(1,j)/nrm(1,j);
                             cp(1,j)=cp(1,j)/nrm(1,j);
+                            
                             if params.balanceclasses==1
+                                %Weighted svm taking into account negative/positive imbalance to solve for polytope hyperplanes
                                 mdl{j}=w_svmtrain(XK,Y,W(:,j),params.C,cp(1,j),cn(1,j),params.kernel);
                             else
+                                %Unweighted svm to solve for polytope hyperplanes
                                 mdl{j}=w_svmtrain(XK,Y,W(:,j),params.C,1,1,params.kernel);
                             end
+                            %Solving subject projection score along each face of the polytope
+                            S(:,j)=w_svmpredict(XK,mdl{j},params.kernel);
                         end
-                        
-                    else
-                        IDXfinal=IDX;
+                        %Subject assignment to the face of the polytope with maximum score
+                        [~,idx]=max(S(Y==1,:),[],2);
+                        Wold=W;
+                        W(Y==1,:)=0;
+                        W(sub2ind(size(W),find(Y==1),idx))=1;
+                        if(~isempty(params.weights))
+                            W=bsxfun(@times,W,params.weights);
+                        end
+                        if norm(W-Wold,'fro')<1e-6;
+                            disp('converged');
+                            break
+                        end
                     end
+                    IDX(:,tt)=idx;
                     
-			%If using fixed clustering inputs, solve polytope once:
-                elseif params.fixedclustering==1
-                    IDXfinal=params.fixedclusteringIDX(Y==1,1);
+                end
+                
+                %Consensus steps, solving the assignments multiple times for stability
+                if params.numconsensus>1
+                    IDXfinal=consensus_clustering(IDX,params.k);
                     W=zeros(size(Y,1),params.k);
                     W(sub2ind(size(W),find(Y==1),IDXfinal))=1;
                     W(Y==-1,:)=1/params.k;
+                    if(~isempty(params.weights))
+                        W=bsxfun(@times,W,params.weights);
+                    end
                     cn=zeros(1,params.k);cp=zeros(1,params.k);nrm=zeros(1,params.k);
                     for j=1:params.k
                         cn(1,j)=1./mean(W(Y==-1,j),1);
@@ -175,65 +170,63 @@ switch params.type
                         end
                     end
                     
+                else
+                    IDXfinal=IDX;
                 end
-%store models and clustering outputs
-                model.mdl=mdl;
-                model.S=W(Y==1,:);
-                model.W=W;
-                model.Yhat=Y;
-                model.Yhat(Y==1)=IDXfinal;
-                model.cn=cn;
-                model.cp=cp;
-        end
-%Option for sparse regularization
-        if params.reg_type==1
-                if params.kernel==0
-                    svmX=sparse(XK);
-                    initparams.kernel=0;
-                    svmparams='-B 1';
-                elseif params.kernel==1
-                    error('Kernel in sparse SVM not supported');
+                
+                %If using fixed clustering inputs, solve polytope once:
+            elseif params.fixedclustering==1
+                IDXfinal=params.fixedclusteringIDX(Y==1,1);
+                W=zeros(size(Y,1),params.k);
+                W(sub2ind(size(W),find(Y==1),IDXfinal))=1;
+                W(Y==-1,:)=1/params.k;
+                if(~isempty(params.weights))
+                    W=bsxfun(@times,W,params.weights);
                 end
-                if params.fixedclustering==0
-                    IDX=zeros(size(Y(Y==1,:),1),params.numconsensus);
-                    for tt=1:params.numconsensus
-                        W=ones(size(Y,1),params.k)/params.k;
-                        W(Y==1,:)=hydra_init_v2(XK,Y,params.k,initparams);
-                        S=zeros(size(W));
-                        cn=zeros(1,params.k);cp=zeros(1,params.k);nrm=zeros(1,params.k);
-                        for t=1:params.numiter
-                            for j=1:params.k
-                                cn(1,j)=1./mean(W(Y==-1,j),1);
-                                cp(1,j)=1./mean(W(Y==1,j),1);
-                                nrm(1,j)=cn(1,j)+cp(1,j);
-                                cn(1,j)=cn(1,j)/nrm(1,j);
-                                cp(1,j)=cp(1,j)/nrm(1,j);
-                                if params.balanceclasses==1
-                                    mdl{j}=w_train(XK,Y,W(:,j),params.C,cp(1,j),cn(1,j));
-                                else
-                                    mdl{j}=w_train(XK,Y,W(:,j),params.C,1,1);
-                                end
-                                S(:,j)=w_svmpredict(XK,mdl{j},0);
-                            end
-                            [~,idx]=max(S(Y==1,:),[],2);
-                            Wold=W;
-                            W(Y==1,:)=0;
-                            W(sub2ind(size(W),find(Y==1),idx))=1;
-                            if norm(W-Wold,'fro')<1e-6;
-                                disp('converged');
-                                break
-                            end
-                        end
-                        IDX(:,tt)=idx;
-                        
+                cn=zeros(1,params.k);cp=zeros(1,params.k);nrm=zeros(1,params.k);
+                for j=1:params.k
+                    cn(1,j)=1./mean(W(Y==-1,j),1);
+                    cp(1,j)=1./mean(W(Y==1,j),1);
+                    nrm(1,j)=cn(1,j)+cp(1,j);
+                    cn(1,j)=cn(1,j)/nrm(1,j);
+                    cp(1,j)=cp(1,j)/nrm(1,j);
+                    if params.balanceclasses==1
+                        mdl{j}=w_svmtrain(XK,Y,W(:,j),params.C,cp(1,j),cn(1,j),params.kernel);
+                    else
+                        mdl{j}=w_svmtrain(XK,Y,W(:,j),params.C,1,1,params.kernel);
                     end
-                    
-                    if params.numconsensus>1
-                        IDXfinal=consensus_clustering(IDX,params.k);
-                        W=zeros(size(Y,1),params.k);
-                        W(sub2ind(size(W),find(Y==1),IDXfinal))=1;
-                        W(Y==-1,:)=1/params.k;
-                        cn=zeros(1,params.k);cp=zeros(1,params.k);nrm=zeros(1,params.k);
+                end
+                
+            end
+            %store models and clustering outputs
+            model.mdl=mdl;
+            model.S=W(Y==1,:);
+            model.W=W;
+            model.Yhat=Y;
+            model.Yhat(Y==1)=IDXfinal;
+            model.cn=cn;
+            model.cp=cp;
+        end
+        %Option for sparse regularization
+        if params.reg_type==1
+            if params.kernel==0
+                svmX=sparse(XK);
+                initparams.kernel=0;
+                svmparams='-B 1';
+            elseif params.kernel==1
+                error('Kernel in sparse SVM not supported');
+            end
+            if params.fixedclustering==0
+                IDX=zeros(size(Y(Y==1,:),1),params.numconsensus);
+                for tt=1:params.numconsensus
+                    W=ones(size(Y,1),params.k)/params.k;
+                    W(Y==1,:)=hydra_init_v2(XK,Y,params.k,initparams);
+                    if(~isempty(params.weights))
+                        W=bsxfun(@times,W,params.weights);
+                    end
+                    S=zeros(size(W));
+                    cn=zeros(1,params.k);cp=zeros(1,params.k);nrm=zeros(1,params.k);
+                    for t=1:params.numiter
                         for j=1:params.k
                             cn(1,j)=1./mean(W(Y==-1,j),1);
                             cp(1,j)=1./mean(W(Y==1,j),1);
@@ -242,21 +235,35 @@ switch params.type
                             cp(1,j)=cp(1,j)/nrm(1,j);
                             if params.balanceclasses==1
                                 mdl{j}=w_train(XK,Y,W(:,j),params.C,cp(1,j),cn(1,j));
-%                                 train(W(:,j),Y,svmX,['-s 5 -c ' num2str(params.C) ' -q -w-1 ' num2str(cn(1,j)) ' -w1 ' num2str(cp(1,j)) ' ' svmparams]);
                             else
                                 mdl{j}=w_train(XK,Y,W(:,j),params.C,1,1);
-%                                 train(W(:,j),Y,svmX,['-s 5 -c ' num2str(params.C) ' -q ' svmparams]);
                             end
+                            S(:,j)=w_svmpredict(XK,mdl{j},0);
                         end
-                        
-                    else
-                        IDXfinal=IDX;
+                        [~,idx]=max(S(Y==1,:),[],2);
+                        Wold=W;
+                        W(Y==1,:)=0;
+                        W(sub2ind(size(W),find(Y==1),idx))=1;
+                        if(~isempty(params.weights))
+                            W=bsxfun(@times,W,params.weights);
+                        end
+                        if norm(W-Wold,'fro')<1e-6;
+                            disp('converged');
+                            break
+                        end
                     end
-                elseif params.fixedclustering==1
-                    IDXfinal=params.fixedclusteringIDX(Y==1,1);
+                    IDX(:,tt)=idx;
+                    
+                end
+                
+                if params.numconsensus>1
+                    IDXfinal=consensus_clustering(IDX,params.k);
                     W=zeros(size(Y,1),params.k);
                     W(sub2ind(size(W),find(Y==1),IDXfinal))=1;
                     W(Y==-1,:)=1/params.k;
+                    if(~isempty(params.weights))
+                        W=bsxfun(@times,W,params.weights);
+                    end
                     cn=zeros(1,params.k);cp=zeros(1,params.k);nrm=zeros(1,params.k);
                     for j=1:params.k
                         cn(1,j)=1./mean(W(Y==-1,j),1);
@@ -266,23 +273,50 @@ switch params.type
                         cp(1,j)=cp(1,j)/nrm(1,j);
                         if params.balanceclasses==1
                             mdl{j}=w_train(XK,Y,W(:,j),params.C,cp(1,j),cn(1,j));
-%                             train(W(:,j),Y,svmX,['-s 5 -c ' num2str(params.C) ' -q -w-1 ' num2str(cn(1,j)) ' -w1 ' num2str(cp(1,j)) ' ' svmparams]);
+                            %                                 train(W(:,j),Y,svmX,['-s 5 -c ' num2str(params.C) ' -q -w-1 ' num2str(cn(1,j)) ' -w1 ' num2str(cp(1,j)) ' ' svmparams]);
                         else
                             mdl{j}=w_train(XK,Y,W(:,j),params.C,1,1);
-%                             train(W(:,j),Y,svmX,['-s 5 -c ' num2str(params.C) ' -q ' svmparams]);
+                            %                                 train(W(:,j),Y,svmX,['-s 5 -c ' num2str(params.C) ' -q ' svmparams]);
                         end
                     end
                     
+                else
+                    IDXfinal=IDX;
                 end
-                model.mdl=mdl;
-                model.S=W(Y==1,:);
-                model.W=W;
-                model.Yhat=Y;
-                model.Yhat(Y==1)=IDXfinal;
-                model.cn=cn;
-                model.cp=cp;
+            elseif params.fixedclustering==1
+                IDXfinal=params.fixedclusteringIDX(Y==1,1);
+                W=zeros(size(Y,1),params.k);
+                W(sub2ind(size(W),find(Y==1),IDXfinal))=1;
+                W(Y==-1,:)=1/params.k;
+                if(~isempty(params.weights))
+                    W=bsxfun(@times,W,params.weights);
+                end
+                cn=zeros(1,params.k);cp=zeros(1,params.k);nrm=zeros(1,params.k);
+                for j=1:params.k
+                    cn(1,j)=1./mean(W(Y==-1,j),1);
+                    cp(1,j)=1./mean(W(Y==1,j),1);
+                    nrm(1,j)=cn(1,j)+cp(1,j);
+                    cn(1,j)=cn(1,j)/nrm(1,j);
+                    cp(1,j)=cp(1,j)/nrm(1,j);
+                    if params.balanceclasses==1
+                        mdl{j}=w_train(XK,Y,W(:,j),params.C,cp(1,j),cn(1,j));
+                        %                             train(W(:,j),Y,svmX,['-s 5 -c ' num2str(params.C) ' -q -w-1 ' num2str(cn(1,j)) ' -w1 ' num2str(cp(1,j)) ' ' svmparams]);
+                    else
+                        mdl{j}=w_train(XK,Y,W(:,j),params.C,1,1);
+                        %                             train(W(:,j),Y,svmX,['-s 5 -c ' num2str(params.C) ' -q ' svmparams]);
+                    end
+                end
+                
+            end
+            model.mdl=mdl;
+            model.S=W(Y==1,:);
+            model.W=W;
+            model.Yhat=Y;
+            model.Yhat(Y==1)=IDXfinal;
+            model.cn=cn;
+            model.cp=cp;
         end
-    
+        
 end
 
 model.params=params;
