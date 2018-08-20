@@ -1,5 +1,5 @@
 %  HYDRA
-%  Version 1.0.0 --- January 2018
+%  Version 1.0.1 --- August 2018
 %  Section of Biomedical Image Analysis
 %  Department of Radiology
 %  University of Pennsylvania
@@ -13,8 +13,10 @@
 %  Copyright (c) 2018 University of Pennsylvania. All rights reserved.
 %  See https://www.med.upenn.edu/sbia/software-agreement.html or COPYING file.
 %
-%  Author:
-%  Erdem Varol
+%  Author: Erdem Varol
+%  Contributor: Aristeidis Sotiras
+%  Acknowledgements: We acknowledge the use of matlab functions written by 
+%  David Corney for the calculation of adjusted Rand Index
 %  software@cbica.upenn.edu
 
 
@@ -36,12 +38,12 @@ if( strcmp(varargin{1},'-h') || isempty(varargin) )
 end
 
 if( strcmp(varargin{1},'--version') || isempty(varargin) )
-    fprintf('Version 1.0.\n')
+    fprintf('Version 1.0.1\n')
     return
 end
 
 if( strcmp(varargin{1},'-v') || isempty(varargin) )
-    fprintf('Version 1.0.\n')
+    fprintf('Version 1.0.1\n')
     return
 end
 
@@ -92,11 +94,11 @@ end
 %           effect of ALL provided covariates is removed. If no file is
 %           specified, no correction is performed.
 %
-% [--weight, -w] : .csv file containing user-provided weights for the respective 
-% 				samples (OPTIONAL). Such weights may be used to appropriately 
-%				counter-balance the effect of covariates. The first column of the file 
+% [--weight, -w] : .csv file containing user-provided weights for the respective
+% 				samples (OPTIONAL). Such weights may be used to appropriately
+%				counter-balance the effect of covariates. The first column of the file
 %				contains the sample IDs, while the second column of the file contains the
-%				the respective weights.
+%				the respective weights. (DEFAULT: empty vector)
 %
 % NOTE: input, cov, and weight CSV files are assumed to have the subjects given
 %       in the same order in their rows
@@ -126,7 +128,7 @@ end
 % [--cvfold, -f]: number of folds for cross validation. Default value is 10.
 % [--vo, -j] : verbose output (i.e., also saves input data to verify that all were
 %      read correctly. Default value is 0
-% [--usage, -u]  Prints basic usage message.          
+% [--usage, -u]  Prints basic usage message.
 % [--help, -h]  Prints help information.
 % [--version, -v]  Prints information about software version.
 %
@@ -137,7 +139,7 @@ end
 %      clustering solutions across folds
 %
 % NOTE: to compile this function do
-% mcc -m  hydra.m
+% mcc -m hydra.m
 %
 %
 % EXAMPLE USE (in matlab)
@@ -174,7 +176,9 @@ if( sum(or(strcmpi(varargin,'--weight'),strcmpi(varargin,'-w')))==1)
     weightCSV=varargin{find(or(strcmpi(varargin,'--weight'),strcmp(varargin,'-w')))+1};
 else
     weightCSV=[];
+    weights = []; 
     params.weights=[];
+    IDweights = [];
 end
 
 if( sum(or(strcmpi(varargin,'--c'),strcmpi(varargin,'-c')))==1)
@@ -272,8 +276,8 @@ validateFcn_init = @(x) (x==0) || (x == 1) || (x==2) || (x == 3) || (x == 4);
 validateFcn_iter = @(x) isscalar(x) && (x>0) && (mod(x,1)==0);
 validateFcn_consensus = @(x) isscalar(x) && (x>0) && (mod(x,1)==0);
 validateFcn_kmin = @(x) isscalar(x) && (x>0) && (mod(x,1)==0);
-validateFcn_kmax = @(x,y) isscalar(x) && (x>0) && (mod(x,1)==0) && (x>y);
-validateFcn_kstep = @(x,y,z) isscalar(x) && (x>0) && (mod(x,1)==0) && (x+y<z);
+validateFcn_kmax = @(x,y) isscalar(x) && (x>0) && (mod(x,1)==0) && (x>=y);
+validateFcn_kstep = @(x,y,z) isscalar(x) && (x>0) && (mod(x,1)==0) ; % && (x+y<=z);
 validateFcn_cvfold = @(x) isscalar(x) && (x>0) && (mod(x,1)==0);
 validateFcn_vo = @(x) (x==0) || (x == 1);
 
@@ -281,7 +285,7 @@ if(~validateFcn_reg_type(params.reg_type))
     error('hydra:argChk','Input regularization type (reg_type) should be either 1 or 2!');
 end
 if(~validateFcn_balance(params.balanceclasses))
-    error('hydra:argChk','Input balance classes (balance) should be either 1 or 2!');
+    error('hydra:argChk','Input balance classes (balance) should be either 0 or 1!');
 end
 if(~validateFcn_init(params.init_type))
     error('hydra:argChk','Initialization type can be either 0, 1, 2, 3, or 4!');
@@ -299,7 +303,7 @@ if(~validateFcn_kmax(params.kmax,params.kmin))
     error('hydra:argChk','Maximum number of clustering solutions to consider should be a positive integer that is greater than the minimum number of clustering solutions!');
 end
 if(~validateFcn_kstep(params.kstep,params.kmin,params.kmax))
-    error('hydra:argChk','Step number of clustering solutions to consider should be a positive integer that is between the minimun and maximum number of clustering solutions!');
+    error('hydra:argChk','Step number of clustering solutions to consider should be a positive integer!');
 end
 if(~validateFcn_cvfold(params.cvfold))
     error('hydra:argChk','Number of folds for cross-validation should be a positive integer!');
@@ -359,6 +363,7 @@ XK=input{:,2:end-1};
 Y=input{:,end};
 
 % z-score imaging features
+disp('zscoring features...');
 XK=zscore(XK);
 disp('Done');
 
@@ -368,6 +373,7 @@ if(~isempty(covfname))
     covardata = readtable(covfname) ;
     IDcovar = covardata{:,1};
     covar = covardata{:,2:end};
+    disp('zscoring covariates...');
     covar = zscore(covar);
     disp('Done');
 end
@@ -377,8 +383,8 @@ if(~isempty(weightfname))
     disp('Loading weights...');
     covardata = readtable(weightfname) ;
     IDweights = covardata{:,1};
-    params.weights = covardata{:,2};
-    weights = param.weights;
+    weights = covardata{:,2};
+    params.weights =  weights ;
     disp('Done');
 end
 
@@ -397,7 +403,7 @@ end
 
 % residualize covariates if necessary
 if(~isempty(covfname))
-    disp('Residualize data...');
+    disp('Residualize data based on provided covariates...');
     [XK0,~]=GLMcorrection(XK,Y,covar,XK,covar);
     disp('Done');
 else
@@ -421,8 +427,11 @@ for f=1:params.cvfold
     % for each clustering solution
     for kh=1:length(clustering)
         params.k=clustering(kh);
+        if(~isempty(weightfname))
+            params.weights =  weights(part~=f) ;
+        end
         disp(['Applying HYDRA for ' num2str(params.k) ' clusters. Fold: ' num2str(f) '/' num2str(params.cvfold)]);
-        model=hydra_solver(XK0(part~=f,:),Y(part~=f,:),[],params);
+        model=hydra_solver(XK0(part~=f,:),Y(part~=f,:),params);
         YK{kh}(part~=f,f)=model.Yhat;
     end
 end
@@ -649,7 +658,7 @@ fprintf('             (i.e., kmin to kmax, with step kstep). Default  value is 1
 fprintf(' [--cvfold, -f]: number of folds for cross validation. Default value is 10.\n')
 fprintf(' [--vo, -j] : verbose output (i.e., also saves input data to verify that all were\n')
 fprintf('      read correctly. Default value is 0\n')
-fprintf(' [--usage, -u]  Prints basic usage message.     \n');     
+fprintf(' [--usage, -u]  Prints basic usage message.     \n');
 fprintf(' [--help, -h]  Prints help information.\n');
 fprintf(' [--version, -v]  Prints information about software version.\n');
 fprintf('\n')
